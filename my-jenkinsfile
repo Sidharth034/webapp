@@ -1,0 +1,57 @@
+pipeline {
+    agent any
+    tools {
+        maven "mymaven"
+    }
+    stages {
+        stage('git clone') {
+            steps{
+                git branch: 'master',
+                url: 'https://github.com/Sidharth034/webapp.git'
+            }
+        }
+        stage('Check-Git-Secrets') {
+          steps {
+           sh 'rm trufflehog || true'
+           sh 'docker run gesellix/trufflehog --json https://github.com/Sidharth034/webapp.git > trufflehog'
+           //sh 'cat trufflehog'
+           }
+        }
+        stage ('Source Composition Analysis') {
+           steps {
+            sh 'rm /var/lib/jenkins/OWASP-Dependency-Check/reports/*'
+            //sh 'rm owasp* || true'
+            sh 'chmod +x /var/lib/jenkins/workspace/devsecops/owasp-dependency-check.sh'
+            sh 'bash /var/lib/jenkins/workspace/devsecops/owasp-dependency-check.sh'
+            sh 'cat /var/lib/jenkins/OWASP-Dependency-Check/reports/dependency-check-report.xml'
+            }
+        }
+        stage('my-sonarqube'){
+            steps{
+                withSonarQubeEnv('my-sonarqube'){
+                sh 'mvn sonar:sonar'
+             }
+            }
+        }
+        stage ('Build') {
+         steps {
+          sh 'mvn clean package'
+         }
+        }
+        stage('deploy'){
+            steps{
+                sshagent(['ssh-key']) {
+                sh 'rm -rf webapp.war'
+                sh 'scp -o StrictHostKeyChecking=no target/WebApp.war ubuntu@18.218.140.56:/opt/tomcat/webapps'
+                }
+            }
+        }
+        stage('DAST'){
+        steps{
+            sshagent(['zap-server']){
+                sh 'ssh -o StrictHostKeyChecking=no ubuntu@3.144.236.139 "docker run -t owasp/zap2docker-stable zap-baseline.py -t http://18.218.140.56:8080/webapp/" || true'
+            }
+        }
+    }
+}
+}
